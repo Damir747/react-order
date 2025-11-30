@@ -1,73 +1,160 @@
-# React + TypeScript + Vite
+**Полное резюме по React commit-фазе и эффектам**.
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+---
 
-Currently, two official plugins are available:
+## 1️⃣ Что делает каждый эффект и refCallback
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+# В React есть несколько видов эффектов и callback refs. Вот их назначение и порядок выполнения:
 
-## React Compiler
+- **useInsertionEffect**
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+  - Синхронный эффект **перед DOM mutations**.
+  - Используется, например, для CSS-in-JS, чтобы вставлять стили до того, как браузер отрендерит элементы.
+  - Выполняется **bottom-up** (сначала дети → потом родители).
 
-## Expanding the ESLint configuration
+- **refCallback**
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+  - Callback ref, вызывается **после DOM mutations**, чтобы получить ссылку на элемент.
+  - Можно использовать для измерений, фокуса, анимаций, интеграции с внешними библиотеками.
+  - Выполняется **bottom-up** (сначала дети → потом родители).
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- **useLayoutEffect**
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+  - Синхронный эффект **после refCallback**, но **до paint**.
+  - Используется для работы с DOM, измерений, синхронных анимаций.
+  - Выполняется **bottom-up** (сначала дети → потом родители).
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+- **useEffect**
+  - Асинхронный эффект **после paint** (после рендера на экран).
+  - Используется для сетевых запросов, подписок, таймеров.
+  - Выполняется **bottom-up** (сначала дети → потом родители).  
+     |
+
+---
+
+## 2️⃣ Порядок выполнения эффектов
+
+Используем дерево:
+
+```
+App
+├─ FirstComponent
+│  └─ SecondComponent
+└─ ThirdComponent
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### 🔹 Render phase (top-down)
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
 ```
+0 App
+1 FirstComponent
+2 SecondComponent
+3 ThirdComponent
+```
+
+### 🔹 useInsertionEffect (bottom-up)
+
+```
+4 useInsertionEffect SecondComponent
+5 useInsertionEffect FirstComponent
+6 useInsertionEffect ThirdComponent
+7 useInsertionEffect App
+```
+
+### 🔹 refCallback → useLayoutEffect (каждый компонент отдельно, bottom-up)
+
+```
+SecondComponent: 8 refCallback → 9 useLayoutEffect
+FirstComponent: 10 refCallback → 11 useLayoutEffect
+ThirdComponent: 12 refCallback → 13 useLayoutEffect
+App: 14 refCallback → 15 useLayoutEffect
+```
+
+### 🔹 useEffect (bottom-up, после paint)
+
+```
+16 useEffect SecondComponent
+17 useEffect FirstComponent
+18 useEffect ThirdComponent
+19 useEffect App
+```
+
+---
+
+## 3️⃣ Что будет выведено в консоль
+
+Собираем всё в порядке:
+
+```
+0 App
+1 FirstComponent
+2 SecondComponent
+3 ThirdComponent
+4 useInsertionEffect SecondComponent
+5 useInsertionEffect FirstComponent
+6 useInsertionEffect ThirdComponent
+7 useInsertionEffect App
+8 refCallback SecondComponent
+9 useLayoutEffect SecondComponent
+10 refCallback FirstComponent
+11 useLayoutEffect FirstComponent
+12 refCallback ThirdComponent
+13 useLayoutEffect ThirdComponent
+14 refCallback App
+15 useLayoutEffect App
+16 useEffect SecondComponent
+17 useEffect FirstComponent
+18 useEffect ThirdComponent
+19 useEffect App
+```
+
+> Это полностью отражает **реальный порядок выполнения эффектов в React 18**, включая bottom-up и цепочку **refCallback → useLayoutEffect для каждого компонента**.
+
+---
+
+## 1️⃣ Что такое «рендер компонента» в React
+
+- **Render phase** — это вызов функции компонента, когда создаётся **виртуальный DOM**.
+
+  - Логи типа `console.log("0 render App")` происходят **сразу**, при этом **DOM в браузере ещё не обновлён**.
+  - React ещё **не сделал paint** на экран — пользователь ничего не видит.
+
+---
+
+## 2️⃣ Когда виртуальный DOM становится «видимым» пользователю
+
+- После **render phase** React переходит в **commit phase**:
+
+  1. Вставляются/обновляются реальные DOM-узлы (**DOM mutations**).
+  2. Выполняются **синхронные эффекты**:
+
+     - `useInsertionEffect`
+     - `refCallback`
+     - `useLayoutEffect`
+
+- **Пока эти эффекты не завершены, браузер не делает paint**, поэтому визуально пользователь ещё ничего не видит.
+
+---
+
+## 3️⃣ Визуальный рендер и useLayoutEffect
+
+- **Commit phase заканчивается** после выполнения **всех layoutEffect**.
+- После этого браузер может **нарисовать DOM на экране** → пользователь видит интерфейс.
+- Таким образом, рендер с точки зрения пользователя начинается с `0 render App` и заканчивается **последним useLayoutEffect** (например, `15 useLayoutEffect App`).
+
+---
+
+## 4️⃣ useEffect и paint
+
+- `useEffect` срабатывает **асинхронно после paint**.
+- Это значит, что все DOM-изменения уже видны, а `useEffect` можно использовать для сетевых запросов, подписок, таймеров и т.д.
+- Пользователь уже видит интерфейс, когда начинают выполняться `useEffect`.
+
+---
+
+## ✅ Вывод
+
+- **Render phase (`console.log("render")`)** → построение виртуального DOM, **ещё не на экране**.
+- **Commit phase (useInsertionEffect → (refCallback → useLayoutEffect))** → DOM вставлен в браузер, layoutEffect ещё выполняются, paint пока не завершён.
+- **Визуально рендер завершён** → после **последнего useLayoutEffect**.
+- **useEffect** → уже после paint, пользовательский интерфейс виден.
